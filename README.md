@@ -3,14 +3,14 @@
 A Telegram bot that helps you build habits, keep streaks alive and never forget a daily check-in.
 Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **asyncio scheduler**.
 
-[![CI](https://github.com/OWNER/habit-tracker-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/habit-tracker-bot/actions/workflows/ci.yml)
+[![CI](https://github.com/Shirenos/habit-tracker-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Shirenos/habit-tracker-bot/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
 ![aiogram](https://img.shields.io/badge/aiogram-3.x-2CA5E0?logo=telegram&logoColor=white)
 ![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> Replace `OWNER` in the CI badge URL with your GitHub username after publishing.
+> Replace `Shirenos` in the CI badge URL with your GitHub username after publishing.
 
 ## ✨ Features
 
