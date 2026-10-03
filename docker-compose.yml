@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_PATH: /data/habits.db
+    volumes:
+      - bot-data:/data
+
+volumes:
+  bot-data:
