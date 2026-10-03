@@ -1,0 +1,44 @@
+"""Application configuration loaded from environment variables / .env file."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from dotenv import load_dotenv
+
+
+class ConfigError(RuntimeError):
+    """Raised when the configuration is missing or invalid."""
+
+
+@dataclass(frozen=True, slots=True)
+class Settings:
+    bot_token: str
+    database_path: Path
+    timezone: ZoneInfo
+    log_level: str = "INFO"
+
+
+def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
+    """Build :class:`Settings` from the environment (and an optional .env file)."""
+    load_dotenv(env_file)
+
+    token = os.getenv("BOT_TOKEN", "").strip()
+    if not token:
+        raise ConfigError("BOT_TOKEN is not set. Copy .env.example to .env and fill it in.")
+
+    tz_name = os.getenv("TIMEZONE", "UTC").strip() or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ConfigError(f"Unknown TIMEZONE: {tz_name!r}") from exc
+
+    return Settings(
+        bot_token=token,
+        database_path=Path(os.getenv("DATABASE_PATH", "data/habits.db")),
+        timezone=tz,
+        log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    )
