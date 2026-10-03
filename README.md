@@ -10,8 +10,6 @@ Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **as
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> Replace `Shirenos` in the CI badge URL with your GitHub username after publishing.
-
 ## ✨ Features
 
 - **Track habits** — add, list and delete personal habits (per-user, isolated).
