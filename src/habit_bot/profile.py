@@ -14,6 +14,7 @@ The Bot API cannot set the bot's photo: upload ``docs/avatar.png`` manually via
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -57,7 +58,7 @@ async def apply_commands(bot: Bot) -> None:
 
 async def apply_profile(bot: Bot) -> list[str]:
     """Set name, descriptions, commands and menu button. Returns a list of failure messages."""
-    steps = {
+    steps: dict[str, Callable[[], Awaitable[bool]]] = {
         "name": lambda: bot.set_my_name(name=BOT_NAME),
         "description": lambda: bot.set_my_description(description=DESCRIPTION),
         "short description": lambda: bot.set_my_short_description(

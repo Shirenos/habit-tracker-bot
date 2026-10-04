@@ -51,6 +51,9 @@ Telegram-бот, который помогает формировать прив
 - Ежедневное напоминание (`/remind 21:30` или готовые пресеты); приходит только по невыполненным
   привычкам и переживает перезапуск.
 - Часовой пояс настраивается (`TIMEZONE`), весь пользовательский ввод экранируется.
+- Важно: напоминания, время которых пришлось на момент, когда бот был выключен, **пропускаются**
+  (не досылаются после запуска). Часовой пояс один на всех пользователей (`TIMEZONE`);
+  персональных поясов пока нет.
 
 **Команды:** `/start`, `/menu`, `/today`, `/add <название>`, `/list`, `/done <номер>`, `/stats`,
 `/remind ЧЧ:ММ` (`/remind off` — выключить), `/delete <номер>`, `/cancel`, `/help`.
@@ -89,9 +92,11 @@ docker compose up -d --build
 - **Daily reminder** — pick a preset (08:00 · 12:00 · 18:00 · 21:00) or `/remind 21:30`; the
   reminder lists only the *unfinished* habits with ✅ buttons and stays silent when all are done.
   Reminders survive restarts.
+  A reminder whose time passes while the bot is down is **skipped**, not sent after the restart.
 - **Bot profile via Bot API** — name, descriptions, Russian command list and the menu button are
   applied by `python -m habit_bot.profile`; the command list is also refreshed on every start.
-- **Timezone aware** — "today" and reminders follow a configurable IANA timezone.
+- **Timezone aware** — "today" and reminders follow a configurable IANA timezone. **One timezone
+  is used for everyone** (`TIMEZONE`); per-user timezones are not supported yet.
 - **Safe output** — all user input is HTML-escaped; length and count limits per user.
 - **Production ready** — Dockerfile, docker-compose with a persistent volume, CI with ruff + pytest.
 
@@ -247,6 +252,7 @@ The SQLite database lives in the `bot-data` volume, so data survives container r
 ```bash
 pip install -r requirements-dev.txt -e .
 ruff check . && ruff format --check .
+mypy
 pytest
 ```
 
@@ -254,7 +260,7 @@ Tests cover the streak maths, the database layer, the service layer, reminders (
 composed message), configuration, text/keyboard rendering (plurals, bars, Telegram length and
 callback-data limits), the bot profile and the avatar generator, plus end-to-end handler flows that
 drive the real aiogram dispatcher against a fake Telegram session.
-CI runs the same checks on Python 3.11, 3.12 and 3.13.
+CI runs the same checks (ruff, mypy, pytest) on Python 3.11, 3.12 and 3.13.
 
 ## 🗂 Project structure
 
@@ -278,7 +284,7 @@ habit-tracker-bot/
 ├── docs/avatar.png        # Avatar (upload via @BotFather /setuserpic)
 ├── docs/preview-*.png     # Interface previews (mockups from the real templates)
 ├── tests/                 # pytest + pytest-asyncio
-├── .github/workflows/     # CI: ruff + pytest
+├── .github/workflows/     # CI: ruff + mypy + pytest
 ├── Dockerfile
 ├── docker-compose.yml
 └── pyproject.toml
@@ -291,7 +297,13 @@ habit-tracker-bot/
 - **Streak rule**: a streak is the run of consecutive done days ending today — or yesterday, so
   your streak doesn't read `0` before you've had the chance to check in.
 - **Scheduler**: one asyncio task per user sleeping until the next `HH:MM` in the configured
-  timezone; tasks are restored from SQLite on startup.
+  timezone; tasks are restored from SQLite on startup. Sleep time is computed in UTC, so DST
+  changes are handled, and a reminder is sent at most once per local date. Reminders missed while
+  the bot was offline are skipped. If Telegram reports that the user blocked the bot, the reminder
+  is removed.
+- **Habit names** are unique per user ignoring case (`casefold`, so Cyrillic works too). The
+  database schema is versioned with `PRAGMA user_version`; older databases are migrated
+  automatically on startup (duplicates differing only by case are kept and renamed `name (2)`).
 
 ## 🗺 Roadmap
 

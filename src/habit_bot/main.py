@@ -30,27 +30,31 @@ async def main() -> None:
     db = Database(settings.database_path)
     await db.connect()
 
-    bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    habits = HabitService(db, settings.timezone)
-    scheduler = ReminderScheduler(
-        db, bot.send_message, settings.timezone, compose=reminder_composer(habits)
-    )
-    await scheduler.start()
-
-    dp = Dispatcher(habits=habits, scheduler=scheduler)
-    dp.include_router(build_router())
-
-    try:  # cheap and idempotent; name/descriptions are applied via `python -m habit_bot.profile`
-        await apply_commands(bot)
-    except TelegramAPIError:
-        logger.warning("Could not refresh the command list", exc_info=True)
-
     try:
-        logger.info("Bot started")
-        await dp.start_polling(bot)
+        bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        try:
+            habits = HabitService(db, settings.timezone)
+            scheduler = ReminderScheduler(
+                db, bot.send_message, settings.timezone, compose=reminder_composer(habits)
+            )
+            try:
+                await scheduler.start()
+
+                dp = Dispatcher(habits=habits, scheduler=scheduler)
+                dp.include_router(build_router())
+
+                try:  # cheap and idempotent; name/descriptions: `python -m habit_bot.profile`
+                    await apply_commands(bot)
+                except TelegramAPIError:
+                    logger.warning("Could not refresh the command list", exc_info=True)
+
+                logger.info("Bot started")
+                await dp.start_polling(bot)
+            finally:
+                await scheduler.stop()
+        finally:
+            await bot.session.close()
     finally:
-        await scheduler.stop()
-        await bot.session.close()
         await db.close()
 
 

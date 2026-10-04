@@ -46,14 +46,14 @@ async def test_add_dialog_via_button_and_cancel(chat, service):
     prompt = last(await chat.say(kb.BTN_ADD), SendMessage)
     assert "Как её назвать" in prompt.text
     await chat.say("x" * 100)  # too long: dialog stays open
-    assert await service.list(1) == []
+    assert await service.list_with_status(1) == []
     added = last(await chat.say("Пить воду"), SendMessage)
     assert "Привычка добавлена" in added.text
-    assert [h.name for h, _ in await service.list(1)] == ["Пить воду"]
+    assert [h.name for h, _ in await service.list_with_status(1)] == ["Пить воду"]
 
     # outside of the dialog free text is not a habit
     hint = last(await chat.say("просто текст"), SendMessage)
-    assert "Не понял" in hint.text and len(await service.list(1)) == 1
+    assert "Не понял" in hint.text and len(await service.list_with_status(1)) == 1
 
     await chat.say("/add")  # no args: starts the dialog
     assert "Отменено" in last(await chat.say("/cancel"), SendMessage).text
@@ -64,7 +64,7 @@ async def test_menu_button_leaves_add_dialog(chat, service):
     await chat.say(kb.BTN_ADD)
     shown = last(await chat.say(kb.BTN_LIST), SendMessage)  # not saved as a habit name
     assert "Пока нет привычек" in shown.text
-    assert await service.list(1) == []
+    assert await service.list_with_status(1) == []
 
 
 async def test_done_command_flow(chat, service):
@@ -118,17 +118,17 @@ async def test_delete_requires_confirmation(chat, service):
     await chat.say("/add Читать")
     ask = last(await chat.say("/delete 1"), SendMessage)
     assert "Удалить привычку?" in ask.text
-    assert len(await service.list(1)) == 1  # nothing deleted yet
+    assert len(await service.list_with_status(1)) == 1  # nothing deleted yet
     assert ("↩️ Отмена", "v:l") in buttons(ask.reply_markup)
 
     await chat.press("v:l")  # cancel = back to the list
-    assert len(await service.list(1)) == 1
+    assert len(await service.list_with_status(1)) == 1
 
     edit = last(await chat.press("del:1"), EditMessageText)
     assert "Удалить привычку?" in edit.text
     calls = await chat.press("delok:1")
     assert "удалена" in last(calls, EditMessageText).text
-    assert await service.list(1) == []
+    assert await service.list_with_status(1) == []
     assert "Привычка уже удалена" in last(await chat.press("delok:1"), AnswerCallbackQuery).text
     assert "Не нашёл" in last(await chat.say("/delete 1"), SendMessage).text
     assert "/delete 1" in last(await chat.say("/delete"), SendMessage).text

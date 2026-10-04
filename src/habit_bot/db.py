@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 import aiosqlite
 
+# Bump when the schema changes and add a step to ``Database._migrate``.
+# 0 = legacy databases created before versioning, 1 = habits.name_key (case-insensitive names).
+SCHEMA_VERSION = 1
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS habits (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL,
     name       TEXT    NOT NULL,
+    name_key   TEXT    NOT NULL,
     created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (user_id, name)
+    UNIQUE (user_id, name_key)
 );
 CREATE INDEX IF NOT EXISTS idx_habits_user ON habits (user_id);
 
@@ -30,6 +36,11 @@ CREATE TABLE IF NOT EXISTS reminders (
     time    TEXT    NOT NULL
 );
 """
+
+
+def name_key(name: str) -> str:
+    """Key used for case-insensitive uniqueness (``casefold`` also handles Cyrillic)."""
+    return name.casefold()
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +75,39 @@ class Database:
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(self._path)
         self._conn.row_factory = aiosqlite.Row
+        try:
+            await self._init_schema(self._conn)
+        except BaseException:
+            await self.close()
+            raise
         await self._conn.execute("PRAGMA foreign_keys = ON")
-        await self._conn.executescript(SCHEMA)
-        await self._conn.commit()
+
+    async def _init_schema(self, conn: aiosqlite.Connection) -> None:
+        async with conn.execute("PRAGMA user_version") as cur:
+            row = await cur.fetchone()
+        version = int(row[0]) if row else 0
+        if version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Database schema version {version} is newer than supported ({SCHEMA_VERSION})."
+            )
+        if version == SCHEMA_VERSION:
+            return
+        async with conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'habits'"
+        ) as cur:
+            has_habits = await cur.fetchone() is not None
+        if not has_habits:  # brand-new database: create the latest schema directly
+            await conn.executescript(SCHEMA)
+            await conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            await conn.commit()
+            return
+        await self._migrate(conn, version)
+
+    @staticmethod
+    async def _migrate(conn: aiosqlite.Connection, version: int) -> None:
+        """Upgrade an existing database in place, one version at a time."""
+        if version < 1:
+            await _migrate_v0_to_v1(conn)
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -75,10 +116,11 @@ class Database:
 
     # -- habits ----------------------------------------------------------
     async def add_habit(self, user_id: int, name: str) -> Habit | None:
-        """Create a habit. Returns ``None`` if the user already has one with that name."""
+        """Create a habit; ``None`` if the user has one with that name (case-insensitive)."""
         try:
             cur = await self.conn.execute(
-                "INSERT INTO habits (user_id, name) VALUES (?, ?)", (user_id, name)
+                "INSERT INTO habits (user_id, name, name_key) VALUES (?, ?, ?)",
+                (user_id, name, name_key(name)),
             )
         except aiosqlite.IntegrityError:
             return None
@@ -90,6 +132,16 @@ class Database:
             "SELECT id, user_id, name FROM habits WHERE user_id = ? ORDER BY id", (user_id,)
         ) as cur:
             return [Habit(r["id"], r["user_id"], r["name"]) async for r in cur]
+
+    async def list_habits_with_done(self, user_id: int, day: date) -> list[tuple[Habit, bool]]:
+        """Habits of ``user_id`` with a flag telling whether each was checked in on ``day``."""
+        async with self.conn.execute(
+            "SELECT h.id, h.user_id, h.name, "
+            "EXISTS (SELECT 1 FROM checkins c WHERE c.habit_id = h.id AND c.day = ?) AS done "
+            "FROM habits h WHERE h.user_id = ? ORDER BY h.id",
+            (day.isoformat(), user_id),
+        ) as cur:
+            return [(Habit(r["id"], r["user_id"], r["name"]), bool(r["done"])) async for r in cur]
 
     async def get_habit(self, user_id: int, habit_id: int) -> Habit | None:
         async with self.conn.execute(
@@ -122,6 +174,20 @@ class Database:
         ) as cur:
             return {date.fromisoformat(r["day"]) async for r in cur}
 
+    async def get_checkin_days_many(self, habit_ids: Sequence[int]) -> dict[int, set[date]]:
+        """Check-in days of several habits in one query (every id is present in the result)."""
+        days: dict[int, set[date]] = {habit_id: set() for habit_id in habit_ids}
+        if not days:
+            return days
+        placeholders = ", ".join("?" * len(days))
+        async with self.conn.execute(
+            f"SELECT habit_id, day FROM checkins WHERE habit_id IN ({placeholders})",
+            list(days),
+        ) as cur:
+            async for r in cur:
+                days[r["habit_id"]].add(date.fromisoformat(r["day"]))
+        return days
+
     # -- reminders -------------------------------------------------------
     async def set_reminder(self, user_id: int, chat_id: int, time: str) -> None:
         await self.conn.execute(
@@ -146,3 +212,82 @@ class Database:
     async def list_reminders(self) -> list[Reminder]:
         async with self.conn.execute("SELECT user_id, chat_id, time FROM reminders") as cur:
             return [Reminder(r["user_id"], r["chat_id"], r["time"]) async for r in cur]
+
+
+async def _migrate_v0_to_v1(conn: aiosqlite.Connection) -> None:
+    """Add ``habits.name_key`` with ``UNIQUE (user_id, name_key)`` to a legacy database.
+
+    ``name_key`` is backfilled with ``casefold(name)``. If a user has habits whose names collide
+    once case is ignored (e.g. "Read" and "read"), the oldest keeps its name and the others get a
+    numeric suffix ("read (2)"), so no habit or check-in is lost. The table is rebuilt in a
+    single transaction with foreign keys off (otherwise dropping ``habits`` would cascade-delete
+    every check-in); ids and ``created_at`` are preserved.
+    """
+    async with conn.execute("PRAGMA table_info(habits)") as cur:
+        columns = {row["name"] async for row in cur}
+    if "name_key" not in columns:
+        await conn.commit()
+        await conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                await _rebuild_habits_with_name_key(conn)
+                await conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                async with conn.execute("PRAGMA foreign_key_check") as cur:
+                    if await cur.fetchall():
+                        raise RuntimeError("Foreign key check failed after migration")
+            except BaseException:
+                await conn.rollback()
+                raise
+            await conn.commit()
+        finally:
+            await conn.execute("PRAGMA foreign_keys = ON")
+    else:  # column already there (e.g. migration interrupted by hand): just record the version
+        await conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        await conn.commit()
+    await conn.executescript(SCHEMA)  # creates any missing tables / indexes (all IF NOT EXISTS)
+
+
+async def _rebuild_habits_with_name_key(conn: aiosqlite.Connection) -> None:
+    async with conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'habits'") as cur:
+        seq_row = await cur.fetchone()
+    async with conn.execute("SELECT id, user_id, name, created_at FROM habits ORDER BY id") as cur:
+        rows = await cur.fetchall()
+
+    taken: set[tuple[int, str]] = set()
+    prepared: list[tuple[int, int, str, str, str]] = []
+    for r in rows:
+        name: str = r["name"]
+        candidate, n = name, 1
+        while (r["user_id"], name_key(candidate)) in taken:
+            n += 1
+            candidate = f"{name} ({n})"
+        taken.add((r["user_id"], name_key(candidate)))
+        prepared.append((r["id"], r["user_id"], candidate, name_key(candidate), r["created_at"]))
+
+    await conn.execute(
+        """
+        CREATE TABLE habits_new (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            name       TEXT    NOT NULL,
+            name_key   TEXT    NOT NULL,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (user_id, name_key)
+        )
+        """
+    )
+    await conn.executemany(
+        "INSERT INTO habits_new (id, user_id, name, name_key, created_at) VALUES (?, ?, ?, ?, ?)",
+        prepared,
+    )
+    await conn.execute("DROP TABLE habits")
+    await conn.execute("ALTER TABLE habits_new RENAME TO habits")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_habits_user ON habits (user_id)")
+    # Keep AUTOINCREMENT from reusing ids of habits deleted earlier.
+    next_seq = max([seq_row["seq"] if seq_row else 0, *(p[0] for p in prepared)])
+    await conn.execute("DELETE FROM sqlite_sequence WHERE name = 'habits'")
+    if next_seq:
+        await conn.execute(
+            "INSERT INTO sqlite_sequence (name, seq) VALUES ('habits', ?)", (next_seq,)
+        )

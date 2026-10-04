@@ -8,7 +8,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from habit_bot import keyboards as kb
 from habit_bot import texts
@@ -85,7 +85,9 @@ async def edit_message(message: Message, text: str, markup: InlineKeyboardMarkup
     return True
 
 
-async def safe_answer(callback, text: str | None = None, *, alert: bool = False) -> None:
+async def safe_answer(
+    callback: CallbackQuery, text: str | None = None, *, alert: bool = False
+) -> None:
     """``answerCallbackQuery`` that never raises (e.g. when the query is too old)."""
     with contextlib.suppress(TelegramBadRequest):
         await callback.answer(text, show_alert=alert)

@@ -62,13 +62,9 @@ class HabitService:
         habit = await self._db.add_habit(user_id, name)
         return (AddResult.OK, habit) if habit else (AddResult.DUPLICATE, None)
 
-    async def list(self, user_id: int) -> list[tuple[Habit, bool]]:
+    async def list_with_status(self, user_id: int) -> list[tuple[Habit, bool]]:
         """Habits paired with whether each was completed today."""
-        today = self.today()
-        return [
-            (h, today in await self._db.get_checkin_days(h.id))
-            for h in await self._db.list_habits(user_id)
-        ]
+        return await self._db.list_habits_with_done(user_id, self.today())
 
     async def done(
         self, user_id: int, habit_id: int, day: date | None = None
@@ -87,9 +83,11 @@ class HabitService:
 
     async def stats(self, user_id: int, today: date | None = None) -> list[HabitStats]:
         today = today or self.today()
+        habits = await self._db.list_habits(user_id)
+        days_by_habit = await self._db.get_checkin_days_many([h.id for h in habits])
         result = []
-        for habit in await self._db.list_habits(user_id):
-            days = await self._db.get_checkin_days(habit.id)
+        for habit in habits:
+            days = days_by_habit[habit.id]
             result.append(
                 HabitStats(
                     habit=habit,
