@@ -287,3 +287,104 @@ async def test_get_checkin_days_many(db):
         c.id: {date(2026, 10, 3)},
     }
     assert await db.get_checkin_days_many([]) == {}
+
+
+async def test_file_database_uses_wal_with_normal_sync_and_busy_timeout(tmp_path):
+    path = tmp_path / "wal.db"
+    database = Database(path)
+    await database.connect()
+    try:
+        async with database.conn.execute("PRAGMA journal_mode") as cur:
+            assert (await cur.fetchone())[0] == "wal"
+        async with database.conn.execute("PRAGMA synchronous") as cur:
+            assert (await cur.fetchone())[0] == 1  # NORMAL
+        async with database.conn.execute("PRAGMA busy_timeout") as cur:
+            assert (await cur.fetchone())[0] == 5000
+    finally:
+        await database.close()
+    con = sqlite3.connect(path)  # WAL is persistent: a new connection sees it too
+    try:
+        assert con.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        con.close()
+
+
+async def test_memory_database_skips_wal(db):
+    async with db.conn.execute("PRAGMA journal_mode") as cur:
+        assert (await cur.fetchone())[0] == "memory"
+
+
+async def test_wal_does_not_break_migration_of_legacy_database(tmp_path):
+    path = tmp_path / "old-wal.db"
+    make_legacy_db(path)
+    database = Database(path)
+    await database.connect()
+    try:
+        async with database.conn.execute("PRAGMA journal_mode") as cur:
+            assert (await cur.fetchone())[0] == "wal"
+        assert await database.list_habits(1)  # legacy data is still there
+    finally:
+        await database.close()
+    assert user_version(path) == SCHEMA_VERSION
+
+
+async def test_reader_is_not_blocked_by_open_write_transaction(tmp_path):
+    """The point of WAL: a second connection can read while a writer holds a transaction."""
+    path = tmp_path / "concurrent.db"
+    database = Database(path)
+    await database.connect()
+    try:
+        await database.add_habit(1, "Read")
+        await database.conn.execute("BEGIN IMMEDIATE")
+        await database.conn.execute(
+            "INSERT INTO habits (user_id, name, name_key) VALUES (2, 'x', 'x')"
+        )
+        reader = sqlite3.connect(path, timeout=0.1)
+        try:
+            assert reader.execute("SELECT COUNT(*) FROM habits").fetchone()[0] == 1
+        finally:
+            reader.close()
+        await database.conn.rollback()
+    finally:
+        await database.close()
+
+
+async def test_admin_stats_on_empty_database(db):
+    stats = await db.get_admin_stats(date(2026, 10, 4))
+    assert (stats.total_users, stats.active_users_7d, stats.total_habits) == (0, 0, 0)
+    assert stats.checkins_today == 0 and stats.db_size_bytes == 0
+
+
+async def test_admin_stats_counts(db):
+    today = date(2026, 10, 4)
+    a1 = await db.add_habit(1, "Read")
+    a2 = await db.add_habit(1, "Run")
+    b1 = await db.add_habit(2, "Water")
+    await db.add_habit(3, "Idle")  # user 3: a habit but no check-ins
+    await db.set_reminder(4, 400, "09:00")  # user 4: only a reminder
+    await db.add_checkin(a1.id, today)
+    await db.add_checkin(a2.id, today)
+    await db.add_checkin(b1.id, date(2026, 9, 28))  # 6 days back: still inside the 7-day window
+    await db.add_checkin(a1.id, date(2026, 9, 1))  # old
+    stats = await db.get_admin_stats(today)
+    assert stats.total_users == 4  # users 1, 2, 3 and 4
+    assert stats.active_users_7d == 2  # users 1 and 2
+    assert stats.total_habits == 4
+    assert stats.checkins_today == 2
+
+
+async def test_admin_stats_window_excludes_eighth_day(db):
+    today = date(2026, 10, 4)
+    h = await db.add_habit(1, "Read")
+    await db.add_checkin(h.id, date(2026, 9, 27))  # 7 days back: outside
+    assert (await db.get_admin_stats(today)).active_users_7d == 0
+
+
+async def test_admin_stats_reports_file_size(tmp_path):
+    database = Database(tmp_path / "size.db")
+    await database.connect()
+    try:
+        await database.add_habit(1, "Read")
+        assert (await database.get_admin_stats(date(2026, 10, 4))).db_size_bytes > 0
+    finally:
+        await database.close()

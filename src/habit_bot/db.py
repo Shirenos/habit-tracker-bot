@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import aiosqlite
 
+from habit_bot.storage import AdminStats, Habit, Reminder
+
 # Bump when the schema changes and add a step to ``Database._migrate``.
 # 0 = legacy databases created before versioning, 1 = habits.name_key (case-insensitive names).
 SCHEMA_VERSION = 1
+BUSY_TIMEOUT_MS = 5000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS habits (
@@ -43,22 +45,16 @@ def name_key(name: str) -> str:
     return name.casefold()
 
 
-@dataclass(frozen=True, slots=True)
-class Habit:
-    id: int
-    user_id: int
-    name: str
-
-
-@dataclass(frozen=True, slots=True)
-class Reminder:
-    user_id: int
-    chat_id: int
-    time: str  # "HH:MM"
+__all__ = ["SCHEMA_VERSION", "AdminStats", "Database", "Habit", "Reminder", "name_key"]
 
 
 class Database:
-    """Thin repository over a single SQLite connection."""
+    """SQLite implementation of :class:`habit_bot.storage.Storage` (one connection, WAL mode).
+
+    WAL lets readers and the writer work at the same time, ``synchronous=NORMAL`` is safe with WAL
+    (a power loss may drop the last commits but never corrupts the file) and ``busy_timeout``
+    makes a writer wait for a lock instead of failing at once.
+    """
 
     def __init__(self, path: str | Path) -> None:
         self._path = str(path)
@@ -76,11 +72,22 @@ class Database:
         self._conn = await aiosqlite.connect(self._path)
         self._conn.row_factory = aiosqlite.Row
         try:
+            await self._configure(self._conn)
             await self._init_schema(self._conn)
         except BaseException:
             await self.close()
             raise
         await self._conn.execute("PRAGMA foreign_keys = ON")
+
+    async def _configure(self, conn: aiosqlite.Connection) -> None:
+        """Apply connection pragmas (WAL is stored in the file, the others are per connection)."""
+        await conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        if self._path != ":memory:":  # in-memory databases cannot use WAL
+            async with conn.execute("PRAGMA journal_mode = WAL") as cur:
+                row = await cur.fetchone()
+            if row is None or str(row[0]).lower() != "wal":
+                raise RuntimeError("Could not enable SQLite WAL mode")
+            await conn.execute("PRAGMA synchronous = NORMAL")
 
     async def _init_schema(self, conn: aiosqlite.Connection) -> None:
         async with conn.execute("PRAGMA user_version") as cur:
@@ -157,6 +164,42 @@ class Database:
         )
         await self.conn.commit()
         return cur.rowcount > 0
+
+    # -- admin -----------------------------------------------------------
+    async def get_admin_stats(self, today: date) -> AdminStats:
+        """Aggregate numbers for the admin panel; ``today`` is the bot's local date."""
+        week_start = today - timedelta(days=6)
+        async with self.conn.execute(
+            "SELECT COUNT(*) FROM (SELECT user_id FROM habits UNION SELECT user_id FROM reminders)"
+        ) as cur:
+            total_users = (await cur.fetchone() or (0,))[0]
+        async with self.conn.execute(
+            "SELECT COUNT(DISTINCT h.user_id) FROM checkins c "
+            "JOIN habits h ON h.id = c.habit_id WHERE c.day BETWEEN ? AND ?",
+            (week_start.isoformat(), today.isoformat()),
+        ) as cur:
+            active_users = (await cur.fetchone() or (0,))[0]
+        async with self.conn.execute("SELECT COUNT(*) FROM habits") as cur:
+            total_habits = (await cur.fetchone() or (0,))[0]
+        async with self.conn.execute(
+            "SELECT COUNT(*) FROM checkins WHERE day = ?", (today.isoformat(),)
+        ) as cur:
+            checkins_today = (await cur.fetchone() or (0,))[0]
+        return AdminStats(
+            total_users=total_users,
+            active_users_7d=active_users,
+            total_habits=total_habits,
+            checkins_today=checkins_today,
+            db_size_bytes=self.file_size(),
+        )
+
+    def file_size(self) -> int:
+        """Bytes used on disk by the database file and its WAL (0 for in-memory databases)."""
+        if self._path == ":memory:":
+            return 0
+        return sum(
+            p.stat().st_size for p in (Path(self._path), Path(self._path + "-wal")) if p.exists()
+        )
 
     # -- check-ins -------------------------------------------------------
     async def add_checkin(self, habit_id: int, day: date) -> bool:

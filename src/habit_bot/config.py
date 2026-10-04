@@ -20,6 +20,23 @@ class Settings:
     database_path: Path
     timezone: ZoneInfo
     log_level: str = "INFO"
+    admin_ids: frozenset[int] = frozenset()
+
+
+def parse_admin_ids(raw: str) -> frozenset[int]:
+    """Parse ``ADMIN_IDS``: comma-separated numeric user IDs (blank entries are ignored)."""
+    ids: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.add(int(part))
+        except ValueError:
+            raise ConfigError(
+                f"ADMIN_IDS must be comma-separated numeric user IDs, got {part!r}"
+            ) from None
+    return frozenset(ids)
 
 
 def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
@@ -41,4 +58,5 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> Settings:
         database_path=Path(os.getenv("DATABASE_PATH", "data/habits.db")),
         timezone=tz,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        admin_ids=parse_admin_ids(os.getenv("ADMIN_IDS", "")),
     )

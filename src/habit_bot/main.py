@@ -40,7 +40,7 @@ async def main() -> None:
             try:
                 await scheduler.start()
 
-                dp = Dispatcher(habits=habits, scheduler=scheduler)
+                dp = Dispatcher(habits=habits, scheduler=scheduler, admin_ids=settings.admin_ids)
                 dp.include_router(build_router())
 
                 try:  # cheap and idempotent; name/descriptions: `python -m habit_bot.profile`

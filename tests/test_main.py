@@ -4,7 +4,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from habit_bot import main as main_module
 from habit_bot.config import Settings
 from habit_bot.db import Database
-from habit_bot.handlers import basic, fallback, habits, reminders
+from habit_bot.handlers import admin, basic, fallback, habits, reminders
 from habit_bot.services.reminders import ReminderScheduler
 
 
@@ -42,7 +42,7 @@ async def test_main_always_closes_db_and_bot_session(tmp_path, monkeypatch, fail
         return None
 
     # Feature routers are module-level singletons; detach them so a fresh tree can be built.
-    for module in (basic, fallback, habits, reminders):
+    for module in (admin, basic, fallback, habits, reminders):
         module.router._parent_router = None
 
     monkeypatch.setattr(Database, "close", db_close)

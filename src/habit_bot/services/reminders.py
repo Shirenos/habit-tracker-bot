@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
-from habit_bot.db import Database
+from habit_bot.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class ReminderScheduler:
 
     def __init__(
         self,
-        db: Database,
+        db: Storage,
         send: SendFunc,
         tz: ZoneInfo,
         compose: ComposeFunc | None = None,

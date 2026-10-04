@@ -32,7 +32,7 @@ from aiogram.exceptions import TelegramBadRequest  # noqa: E402
 from aiogram.methods import EditMessageText, SendMessage  # noqa: E402
 from aiogram.types import CallbackQuery, Chat, Message, Update, User  # noqa: E402
 
-from habit_bot.handlers import basic, build_router, fallback, habits, reminders  # noqa: E402
+from habit_bot.handlers import admin, basic, build_router, fallback, habits, reminders  # noqa: E402
 from habit_bot.services.reminders import ReminderScheduler  # noqa: E402
 
 
@@ -131,8 +131,17 @@ async def chat(service, scheduler):
     session = FakeSession()
     bot = Bot("123456:TEST-TOKEN", session=session)
     # Feature routers are module-level singletons; detach them so every test can build a fresh tree.
-    for module in (basic, fallback, habits, reminders):
+    for module in (admin, basic, fallback, habits, reminders):
         module.router._parent_router = None
-    dp = Dispatcher(habits=service, scheduler=scheduler)
+    dp = Dispatcher(habits=service, scheduler=scheduler, admin_ids=frozenset({ADMIN_ID}))
     dp.include_router(build_router())
     return Chat1(dp, bot, session)
+
+
+ADMIN_ID = 777
+
+
+@pytest_asyncio.fixture
+async def admin_chat(chat):
+    """The same bot, talked to by the admin user (ID listed in ``admin_ids``)."""
+    return Chat1(chat.dp, chat.bot, chat.session, user_id=ADMIN_ID)

@@ -73,6 +73,15 @@ python -m habit_bot
 docker compose up -d --build
 ```
 
+**Новое: администрирование, масштабирование и хостинг**
+
+- `/admin` — панель администратора (только для Telegram ID из `ADMIN_IDS` в `.env`, остальным бот
+  не отвечает): пользователи, активные за 7 дней, привычки, отметки за сегодня, размер БД.
+- SQLite работает в режиме **WAL** (`synchronous=NORMAL`, `busy_timeout=5000`): для сотен
+  пользователей такого бота этого достаточно; следующий шаг — PostgreSQL (см. раздел «Scaling»).
+- Деплой на любой недорогой VPS: `docker compose up -d --build` (подробности — в разделе «Deploy»).
+  Нужен сервер, с которого доступен Telegram.
+
 Токен хранится только в `.env` (файл в `.gitignore`) и никогда не попадает в репозиторий.
 Проверки: `pip install -r requirements-dev.txt -e . && ruff check . && pytest`.
 
@@ -98,7 +107,9 @@ docker compose up -d --build
 - **Timezone aware** — "today" and reminders follow a configurable IANA timezone. **One timezone
   is used for everyone** (`TIMEZONE`); per-user timezones are not supported yet.
 - **Safe output** — all user input is HTML-escaped; length and count limits per user.
-- **Production ready** — Dockerfile, docker-compose with a persistent volume, CI with ruff + pytest.
+- **Admin panel** — an admin-only `/admin` command with usage stats (see [Admin panel](#-admin-panel)).
+- **Production ready** — SQLite in WAL mode, Dockerfile (non-root) and docker-compose with a
+  persistent volume, CI with ruff + mypy + pytest. See [Scaling](#-scaling) and [Deploy](#-deploy).
 
 ## 💬 Commands
 
@@ -115,6 +126,7 @@ docker compose up -d --build
 | `/delete <id>` | Delete a habit and its history (asks for confirmation) |
 | `/cancel` | Leave the "enter a habit name" dialog |
 | `/help` | Help |
+| `/admin` | Usage stats — **admins only** (IDs from `ADMIN_IDS`); silently ignored for everyone else |
 
 ## 🎨 Interface
 
@@ -235,6 +247,7 @@ docker compose logs -f
 ```
 
 The SQLite database lives in the `bot-data` volume, so data survives container rebuilds.
+See [Deploy](#-deploy) for running it on a server.
 
 ### Configuration
 
@@ -244,8 +257,91 @@ The SQLite database lives in the `bot-data` volume, so data survives container r
 | `DATABASE_PATH` | `data/habits.db` | SQLite file location |
 | `TIMEZONE` | `UTC` | IANA timezone for "today" and reminders |
 | `LOG_LEVEL` | `INFO` | Python logging level |
+| `ADMIN_IDS` | empty | Comma-separated Telegram user IDs allowed to use `/admin` (e.g. `123456789,987654321`) |
 
 > 🔐 Never commit `.env` — it is already in `.gitignore`.
+
+## 🛠 Admin panel
+
+Set `ADMIN_IDS` in `.env` to a comma-separated list of numeric Telegram user IDs (you can find yours
+with [@userinfobot](https://t.me/userinfobot)) and restart the bot. Those users can send `/admin`
+and get:
+
+- total users (anyone with a habit or a reminder),
+- active users in the last 7 days (at least one check-in),
+- total habits,
+- check-ins made today,
+- the size of the database file (including its WAL file).
+
+Everyone else is ignored silently — the bot does not reply to `/admin` at all — and the command is
+not listed in `/help` or in the bot's command menu. With an empty `ADMIN_IDS` the panel is disabled.
+
+## 📈 Scaling
+
+The bot stores everything in **SQLite**, opened in **WAL** mode (`journal_mode=WAL`,
+`synchronous=NORMAL`, `busy_timeout=5000`):
+
+- Readers never block the writer and the writer does not block readers, so many users can check
+  habits while others tick them off.
+- A habit tracker is a tiny workload: a user produces a handful of small writes per day
+  (a check-in is a single-row insert), and reminders are one lightweight asyncio task per user.
+  SQLite in WAL mode comfortably handles thousands of writes per second on a cheap VPS, so
+  **hundreds of users (and well beyond) are fine** — the bottleneck is the Telegram API rate
+  limits, not the database.
+- `busy_timeout` makes a writer wait up to 5 s for a lock instead of failing, and the schema is
+  versioned (`PRAGMA user_version`) and migrated automatically on start.
+- Back up by copying the database while the bot is stopped, or with `sqlite3 habits.db ".backup copy.db"`.
+
+The storage layer sits behind a small interface (`habit_bot.storage.Storage`); services and
+handlers never touch SQL. **When SQLite stops being enough** — several bot processes sharing one
+database, webhook mode behind multiple workers, or tens of thousands of active users — the next
+step is **PostgreSQL**: implement the same `Storage` interface on top of `asyncpg`/`psycopg` and
+select it from the configuration. PostgreSQL is *not* implemented yet; today SQLite + WAL is the
+only backend.
+
+## 🌐 Deploy
+
+The repository ships a `Dockerfile` (Python slim, runs as a non-root user, database in the
+`/data` volume), a `docker-compose.yml` (`restart: unless-stopped`, `env_file: .env`, named data
+volume) and a `.dockerignore`. Any cheap VPS (1 vCPU / 512 MB–1 GB RAM is plenty) with Docker is
+enough.
+
+> ⚠️ The bot talks to the Telegram Bot API (long polling), so the server must be able to reach
+> `api.telegram.org`. Pick a host/region where Telegram is not blocked.
+
+```bash
+# on the server (with Docker + the Compose plugin installed)
+git clone https://github.com/Shirenos/habit-tracker-bot.git
+cd habit-tracker-bot
+cp .env.example .env
+nano .env                      # BOT_TOKEN, TIMEZONE, ADMIN_IDS
+docker compose up -d --build   # build and start in the background
+docker compose logs -f         # watch the logs
+```
+
+Useful commands:
+
+```bash
+docker compose ps                     # status
+docker compose restart                # restart after editing .env
+git pull && docker compose up -d --build   # update to a new version
+docker compose down                   # stop (the data volume is kept; add -v to delete it!)
+```
+
+The container restarts automatically after a crash or a server reboot. Do not run the same bot
+token in two places at once (e.g. locally and on the server) — Telegram only allows one polling
+client per token. Only outbound connections are needed, so no ports have to be opened.
+
+To back up the database from the volume:
+
+```bash
+docker compose stop
+docker run --rm -v habit-tracker-bot_bot-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/habits-backup.tgz -C /data .
+docker compose start
+```
+
+(The volume name is `<project-folder>_bot-data`; check it with `docker volume ls`.)
 
 ## 🧪 Development
 
@@ -268,13 +364,14 @@ CI runs the same checks (ruff, mypy, pytest) on Python 3.11, 3.12 and 3.13.
 habit-tracker-bot/
 ├── src/habit_bot/
 │   ├── config.py          # Settings from env / .env
-│   ├── db.py              # aiosqlite repository + schema
+│   ├── storage.py         # Storage interface (protocol) + shared dataclasses
+│   ├── db.py              # SQLite (WAL) implementation of Storage + schema/migrations
 │   ├── main.py            # Wiring: bot, dispatcher, scheduler
 │   ├── texts.py           # Russian texts, cards, progress bars, stats chart (pure)
 │   ├── keyboards.py       # Reply menu + inline keyboards, callback-data scheme
 │   ├── views.py           # Screens = (text, keyboard); in-place editing helpers
 │   ├── profile.py         # Name / descriptions / commands / menu button via Bot API
-│   ├── handlers/          # aiogram routers (basic, habits, reminders, fallback)
+│   ├── handlers/          # aiogram routers (admin, basic, habits, reminders, fallback)
 │   └── services/
 │       ├── streaks.py     # Pure streak / history logic
 │       ├── habits.py      # Business logic on top of the DB
@@ -285,15 +382,15 @@ habit-tracker-bot/
 ├── docs/preview-*.png     # Interface previews (mockups from the real templates)
 ├── tests/                 # pytest + pytest-asyncio
 ├── .github/workflows/     # CI: ruff + mypy + pytest
-├── Dockerfile
-├── docker-compose.yml
+├── Dockerfile             # non-root image, DB in the /data volume
+├── docker-compose.yml     # restart: unless-stopped, env_file, data volume
 └── pyproject.toml
 ```
 
 ### Design notes
 
 - **Layers**: handlers only parse Telegram input and format replies; services hold the logic;
-  `db.py` is the only module that speaks SQL. Streak maths is pure and trivially testable.
+  `db.py` is the only module that speaks SQL, behind the `Storage` interface in `storage.py`. Streak maths is pure and trivially testable.
 - **Streak rule**: a streak is the run of consecutive done days ending today — or yesterday, so
   your streak doesn't read `0` before you've had the chance to check in.
 - **Scheduler**: one asyncio task per user sleeping until the next `HH:MM` in the configured
@@ -313,6 +410,7 @@ habit-tracker-bot/
 - [ ] Multiple reminders and per-habit reminders
 - [ ] Weekly goals and custom schedules (e.g. Mon/Wed/Fri)
 - [ ] Charts / monthly heatmap export
+- [ ] PostgreSQL backend for the `Storage` interface (for multi-process / very large setups)
 - [ ] Webhook mode and a `/export` command (CSV)
 - [ ] Localisation (i18n) — the UI is currently Russian only
 

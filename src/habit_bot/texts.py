@@ -10,6 +10,7 @@ from datetime import date, time
 from html import escape
 
 from habit_bot.services.habits import MAX_HABITS_PER_USER, MAX_NAME_LENGTH, HabitStats
+from habit_bot.storage import AdminStats
 
 SEP = "━━━━━━━━━━━━━━━"
 
@@ -414,3 +415,26 @@ def reminder_set(at: time) -> str:
 
 def reminder_off(removed: bool) -> str:
     return "🔕 Напоминание выключено." if removed else "🔕 Напоминание и так не было включено."
+
+
+def format_size(size: int) -> str:
+    """Human-readable byte size, e.g. ``1.5 MB`` (binary units)."""
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{int(value)} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def admin_panel(stats: AdminStats) -> str:
+    """Admin statistics card (Russian, like the rest of the UI)."""
+    return (
+        "🛠 <b>Админ-панель</b>\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"👥 Пользователей: <b>{stats.total_users}</b>\n"
+        f"🔥 Активных за 7 дней: <b>{stats.active_users_7d}</b>\n"
+        f"📋 Привычек: <b>{stats.total_habits}</b>\n"
+        f"✅ Отметок сегодня: <b>{stats.checkins_today}</b>\n"
+        f"💾 Размер БД: <b>{format_size(stats.db_size_bytes)}</b>"
+    )

@@ -7,8 +7,8 @@ from datetime import date, datetime
 from enum import Enum
 from zoneinfo import ZoneInfo
 
-from habit_bot.db import Database, Habit
 from habit_bot.services import streaks
+from habit_bot.storage import AdminStats, Habit, Storage
 
 MAX_NAME_LENGTH = 64
 MAX_HABITS_PER_USER = 30
@@ -42,7 +42,7 @@ class HabitStats:
 
 
 class HabitService:
-    def __init__(self, db: Database, tz: ZoneInfo) -> None:
+    def __init__(self, db: Storage, tz: ZoneInfo) -> None:
         self._db = db
         self._tz = tz
 
@@ -52,6 +52,9 @@ class HabitService:
 
     def today(self) -> date:
         return datetime.now(self._tz).date()
+
+    async def admin_stats(self) -> AdminStats:
+        return await self._db.get_admin_stats(self.today())
 
     async def add(self, user_id: int, name: str) -> tuple[AddResult, Habit | None]:
         name = " ".join(name.split())

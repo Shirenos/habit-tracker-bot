@@ -2,11 +2,17 @@ services:
   bot:
     build: .
     restart: unless-stopped
+    init: true  # forward SIGTERM so `docker compose stop` shuts the bot down cleanly
     env_file: .env
     environment:
       DATABASE_PATH: /data/habits.db
     volumes:
       - bot-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   bot-data:
