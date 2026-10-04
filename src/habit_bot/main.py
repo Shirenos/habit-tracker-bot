@@ -11,7 +11,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
 
 from habit_bot.config import ConfigError, load_settings
-from habit_bot.db import Database
+from habit_bot.factory import create_storage
 from habit_bot.handlers import build_router
 from habit_bot.profile import apply_commands
 from habit_bot.services.habits import HabitService
@@ -27,7 +27,7 @@ async def main() -> None:
         level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
 
-    db = Database(settings.database_path)
+    db = create_storage(settings)
     await db.connect()
 
     try:

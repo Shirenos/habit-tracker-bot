@@ -1,17 +1,78 @@
+import contextlib
+import os
+import uuid
+from collections.abc import AsyncIterator
 from zoneinfo import ZoneInfo
 
+import pytest
 import pytest_asyncio
 
 from habit_bot.db import Database
 from habit_bot.services.habits import HabitService
+from habit_bot.storage import Storage
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "sqlite_only: needs SQLite internals; skipped for Postgres")
+
+
+@contextlib.asynccontextmanager
+async def open_sqlite() -> AsyncIterator[Database]:
+    database = Database(":memory:")
+    await database.connect()
+    try:
+        yield database
+    finally:
+        await database.close()
+
+
+@contextlib.asynccontextmanager
+async def open_postgres() -> AsyncIterator[Storage]:
+    """PostgresStorage in its own throw-away schema of the ``DATABASE_URL_TEST`` server."""
+    url = os.getenv("DATABASE_URL_TEST")
+    if not url:
+        pytest.skip("DATABASE_URL_TEST is not set")
+    asyncpg = pytest.importorskip("asyncpg")
+    from habit_bot.pg import PostgresStorage
+
+    schema = f"t_{uuid.uuid4().hex}"
+    admin = await asyncpg.connect(url)
+    await admin.execute(f'CREATE SCHEMA "{schema}"')
+    storage = PostgresStorage(url, schema=schema)
+    try:
+        await storage.connect()
+        yield storage
+    finally:
+        await storage.close()
+        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        await admin.close()
 
 
 @pytest_asyncio.fixture
-async def db():
-    database = Database(":memory:")
-    await database.connect()
-    yield database
-    await database.close()
+async def sqlite_db():
+    """In-memory SQLite database."""
+    async with open_sqlite() as database:
+        yield database
+
+
+@pytest_asyncio.fixture
+async def pg_storage():
+    """Postgres storage in an isolated schema (skipped without ``DATABASE_URL_TEST``)."""
+    async with open_postgres() as storage:
+        yield storage
+
+
+@pytest_asyncio.fixture(params=["sqlite", "postgres"])
+async def db(request):
+    """The storage under test: the whole shared suite runs against both backends."""
+    if request.param == "sqlite":
+        async with open_sqlite() as database:
+            yield database
+        return
+    if request.node.get_closest_marker("sqlite_only"):
+        pytest.skip("SQLite-specific test")
+    async with open_postgres() as storage:
+        yield storage
 
 
 @pytest_asyncio.fixture

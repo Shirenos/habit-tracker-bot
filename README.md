@@ -3,12 +3,14 @@
 A Telegram bot that helps you build habits, keep streaks alive and never forget a daily check-in.
 The bot's user interface is in Russian (message strings and example output below are shown as the
 bot really sends them; English glosses are added where useful).
-Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **asyncio scheduler**.
+Built with **aiogram 3**, **SQLite (aiosqlite, WAL mode)** — or optionally **PostgreSQL (asyncpg)** — and a tiny
+dependency-free **asyncio scheduler**.
 
 [![CI](https://github.com/Shirenos/habit-tracker-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Shirenos/habit-tracker-bot/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
 ![aiogram](https://img.shields.io/badge/aiogram-3.x-2CA5E0?logo=telegram&logoColor=white)
 ![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/storage-PostgreSQL-4169E1?logo=postgresql&logoColor=white)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -77,8 +79,13 @@ docker compose up -d --build
 
 - `/admin` — панель администратора (только для Telegram ID из `ADMIN_IDS` в `.env`, остальным бот
   не отвечает): пользователи, активные за 7 дней, привычки, отметки за сегодня, размер БД.
-- SQLite работает в режиме **WAL** (`synchronous=NORMAL`, `busy_timeout=5000`): для сотен
-  пользователей такого бота этого достаточно; следующий шаг — PostgreSQL (см. раздел «Scaling»).
+- По умолчанию SQLite работает в режиме **WAL** (`synchronous=NORMAL`, `busy_timeout=5000`): для
+  сотен пользователей такого бота этого достаточно.
+- Поддерживается и **PostgreSQL** (asyncpg): задайте `DATABASE_URL=postgresql://…` — и бот пойдёт в
+  Postgres; без неё остаётся SQLite. Перенос данных: `scripts/migrate_sqlite_to_postgres.py`.
+  Запуск с Postgres в Docker:
+  `docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build`
+  (нужен `POSTGRES_PASSWORD` в `.env`). Подробности — в разделах «Scaling» и «Deploy».
 - Деплой на любой недорогой VPS: `docker compose up -d --build` (подробности — в разделе «Deploy»).
   Нужен сервер, с которого доступен Telegram.
 
@@ -108,7 +115,9 @@ docker compose up -d --build
   is used for everyone** (`TIMEZONE`); per-user timezones are not supported yet.
 - **Safe output** — all user input is HTML-escaped; length and count limits per user.
 - **Admin panel** — an admin-only `/admin` command with usage stats (see [Admin panel](#-admin-panel)).
-- **Production ready** — SQLite in WAL mode, Dockerfile (non-root) and docker-compose with a
+- **SQLite or PostgreSQL** — SQLite in WAL mode by default, PostgreSQL (asyncpg pool) when `DATABASE_URL` is set;
+  one `Storage` interface, one shared test-suite for both.
+- **Production ready** — Dockerfile (non-root) and docker-compose with a
   persistent volume, CI with ruff + mypy + pytest. See [Scaling](#-scaling) and [Deploy](#-deploy).
 
 ## 💬 Commands
@@ -254,7 +263,9 @@ See [Deploy](#-deploy) for running it on a server.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `BOT_TOKEN` | — (required) | Telegram bot token from @BotFather |
-| `DATABASE_PATH` | `data/habits.db` | SQLite file location |
+| `DATABASE_PATH` | `data/habits.db` | SQLite file location (used when `DATABASE_URL` is empty) |
+| `DATABASE_URL` | empty | PostgreSQL DSN, e.g. `postgresql://user:pass@host:5432/habits`. When set, PostgreSQL is used instead of SQLite (needs the `postgres` extra) |
+| `POSTGRES_PASSWORD` | — | Only for `docker-compose.postgres.yml`: password of the bundled PostgreSQL container |
 | `TIMEZONE` | `UTC` | IANA timezone for "today" and reminders |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 | `ADMIN_IDS` | empty | Comma-separated Telegram user IDs allowed to use `/admin` (e.g. `123456789,987654321`) |
@@ -278,33 +289,60 @@ not listed in `/help` or in the bot's command menu. With an empty `ADMIN_IDS` th
 
 ## 📈 Scaling
 
-The bot stores everything in **SQLite**, opened in **WAL** mode (`journal_mode=WAL`,
-`synchronous=NORMAL`, `busy_timeout=5000`):
+The bot has two interchangeable storage backends behind one interface
+(`habit_bot.storage.Storage`); handlers and services never touch SQL:
 
-- Readers never block the writer and the writer does not block readers, so many users can check
-  habits while others tick them off.
-- A habit tracker is a tiny workload: a user produces a handful of small writes per day
-  (a check-in is a single-row insert), and reminders are one lightweight asyncio task per user.
-  SQLite in WAL mode comfortably handles thousands of writes per second on a cheap VPS, so
-  **hundreds of users (and well beyond) are fine** — the bottleneck is the Telegram API rate
-  limits, not the database.
-- `busy_timeout` makes a writer wait up to 5 s for a lock instead of failing, and the schema is
-  versioned (`PRAGMA user_version`) and migrated automatically on start.
-- Back up by copying the database while the bot is stopped, or with `sqlite3 habits.db ".backup copy.db"`.
+| | **SQLite + WAL** (default) | **PostgreSQL** |
+| --- | --- | --- |
+| Selected by | nothing set (`DATABASE_PATH`) | `DATABASE_URL=postgresql://…` |
+| Driver | `aiosqlite` | `asyncpg` (connection pool), optional extra |
+| Setup | zero — a single file | a PostgreSQL 13+ server (a `postgres:16-alpine` container is bundled) |
+| Good for | one bot process, up to many hundreds / thousands of users | several processes, managed hosting, very large setups, off-the-shelf backups & replication |
 
-The storage layer sits behind a small interface (`habit_bot.storage.Storage`); services and
-handlers never touch SQL. **When SQLite stops being enough** — several bot processes sharing one
-database, webhook mode behind multiple workers, or tens of thousands of active users — the next
-step is **PostgreSQL**: implement the same `Storage` interface on top of `asyncpg`/`psycopg` and
-select it from the configuration. PostgreSQL is *not* implemented yet; today SQLite + WAL is the
-only backend.
+**SQLite** is opened in **WAL** mode (`journal_mode=WAL`, `synchronous=NORMAL`,
+`busy_timeout=5000`): readers never block the writer and vice versa, and a writer waits up to 5 s
+for a lock instead of failing. A habit tracker is a tiny workload — a user produces a handful of
+small writes per day (a check-in is a single-row insert) and reminders are one lightweight asyncio
+task per user — so SQLite + WAL comfortably serves **hundreds of users and well beyond**; the
+bottleneck is the Telegram API rate limits, not the database. Back up by copying the file while the
+bot is stopped or with `sqlite3 habits.db ".backup copy.db"`.
+
+**PostgreSQL** gets the same schema (`BIGINT` ids, `DATE` check-ins, `TIMESTAMPTZ` stored in UTC,
+`name_key = casefold(name)` for case-insensitive names) and the same behaviour. Migrations are
+tracked in a `schema_version` table and applied automatically on start under an advisory lock, just
+like `PRAGMA user_version` on SQLite. The `/admin` panel reports the database size through
+`pg_database_size()`. The whole storage test-suite runs against both backends.
+
+### Switching to PostgreSQL
+
+1. Install the driver: `pip install '.[postgres]'` (the Docker image already contains it).
+2. Create a database and set `DATABASE_URL` in `.env`:
+
+   ```bash
+   DATABASE_URL=postgresql://habits:secret@localhost:5432/habits
+   ```
+
+   With Docker, use the bundled server instead — see [Deploy](#-deploy).
+3. (Optional) copy the existing SQLite data — stop the bot first:
+
+   ```bash
+   pip install '.[postgres]'
+   python scripts/migrate_sqlite_to_postgres.py --sqlite data/habits.db \
+       --postgres postgresql://habits:secret@localhost:5432/habits
+   ```
+
+   The script creates the schema if needed, keeps habit ids, check-ins, reminders and names, only
+   *reads* the SQLite file, and is idempotent: running it again skips rows that already exist. If
+   the SQLite file comes from an old version, start the bot once on it so it is migrated first.
+4. Start the bot. Remove `DATABASE_URL` to go back to SQLite (data written to PostgreSQL after the
+   switch is not copied back).
 
 ## 🌐 Deploy
 
-The repository ships a `Dockerfile` (Python slim, runs as a non-root user, database in the
-`/data` volume), a `docker-compose.yml` (`restart: unless-stopped`, `env_file: .env`, named data
-volume) and a `.dockerignore`. Any cheap VPS (1 vCPU / 512 MB–1 GB RAM is plenty) with Docker is
-enough.
+The repository ships a `Dockerfile` (Python slim, runs as a non-root user, SQLite database in the
+`/data` volume, `asyncpg` included), a `docker-compose.yml` (**SQLite**, `restart: unless-stopped`,
+`env_file: .env`, named data volume), a `docker-compose.postgres.yml` override (**PostgreSQL**) and
+a `.dockerignore`. Any cheap VPS (1 vCPU / 512 MB–1 GB RAM is plenty) with Docker is enough.
 
 > ⚠️ The bot talks to the Telegram Bot API (long polling), so the server must be able to reach
 > `api.telegram.org`. Pick a host/region where Telegram is not blocked.
@@ -315,24 +353,52 @@ git clone https://github.com/Shirenos/habit-tracker-bot.git
 cd habit-tracker-bot
 cp .env.example .env
 nano .env                      # BOT_TOKEN, TIMEZONE, ADMIN_IDS
-docker compose up -d --build   # build and start in the background
+docker compose up -d --build   # build and start in the background (SQLite)
 docker compose logs -f         # watch the logs
 ```
 
-Useful commands:
+### With PostgreSQL
+
+Add a password to `.env` (URL-safe characters, e.g. `openssl rand -hex 16`) and start the stack
+with the override file; it adds a `postgres:16-alpine` service (healthcheck, `pg-data` volume, no
+published ports) and points the bot at it through `DATABASE_URL`:
 
 ```bash
-docker compose ps                     # status
-docker compose restart                # restart after editing .env
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build
+```
+
+Use the same `-f … -f …` pair for every later command (`logs`, `ps`, `down`, …), or export
+`COMPOSE_FILE=docker-compose.yml:docker-compose.postgres.yml` once.
+
+**Moving an existing Docker (SQLite) deployment to PostgreSQL.** The old database is in the
+`bot-data` volume, which the `bot` service mounts at `/data`, and the image contains the migration
+script:
+
+```bash
+docker compose stop bot
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml run --rm --no-deps bot \
+  python scripts/migrate_sqlite_to_postgres.py --sqlite /data/habits.db
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build
+```
+
+The old SQLite file stays in the volume untouched, so you can switch back at any time.
+
+### Everyday commands
+
+```bash
+docker compose ps                          # status
+docker compose restart                     # restart after editing .env
 git pull && docker compose up -d --build   # update to a new version
-docker compose down                   # stop (the data volume is kept; add -v to delete it!)
+docker compose down                        # stop (data volumes are kept; add -v to delete them!)
 ```
 
 The container restarts automatically after a crash or a server reboot. Do not run the same bot
 token in two places at once (e.g. locally and on the server) — Telegram only allows one polling
 client per token. Only outbound connections are needed, so no ports have to be opened.
 
-To back up the database from the volume:
+To back up the SQLite database from the volume:
 
 ```bash
 docker compose stop
@@ -341,7 +407,8 @@ docker run --rm -v habit-tracker-bot_bot-data:/data -v "$PWD":/backup alpine \
 docker compose start
 ```
 
-(The volume name is `<project-folder>_bot-data`; check it with `docker volume ls`.)
+(The volume name is `<project-folder>_bot-data`; check it with `docker volume ls`.) For PostgreSQL
+use `docker compose exec postgres pg_dump -U habits habits > habits.sql`.
 
 ## 🧪 Development
 
@@ -356,7 +423,19 @@ Tests cover the streak maths, the database layer, the service layer, reminders (
 composed message), configuration, text/keyboard rendering (plurals, bars, Telegram length and
 callback-data limits), the bot profile and the avatar generator, plus end-to-end handler flows that
 drive the real aiogram dispatcher against a fake Telegram session.
-CI runs the same checks (ruff, mypy, pytest) on Python 3.11, 3.12 and 3.13.
+The storage tests (everything that uses the `db` fixture, including the service and handler flows)
+run against **both backends**. The PostgreSQL half needs a server and is skipped unless
+`DATABASE_URL_TEST` is set; each test works in its own throw-away schema, so any scratch database
+will do:
+
+```bash
+docker run -d --name pg-test -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+export DATABASE_URL_TEST=postgresql://postgres:postgres@localhost:5432/postgres
+pytest -q
+```
+
+CI runs the same checks (ruff, mypy, pytest) on Python 3.11, 3.12 and 3.13, with a PostgreSQL 16
+service container so both backends are tested.
 
 ## 🗂 Project structure
 
@@ -366,6 +445,9 @@ habit-tracker-bot/
 │   ├── config.py          # Settings from env / .env
 │   ├── storage.py         # Storage interface (protocol) + shared dataclasses
 │   ├── db.py              # SQLite (WAL) implementation of Storage + schema/migrations
+│   ├── pg.py              # PostgreSQL (asyncpg pool) implementation of Storage
+│   ├── factory.py         # Picks the backend: DATABASE_URL -> PostgreSQL, else SQLite
+│   ├── sqlite_to_pg.py    # Idempotent SQLite -> PostgreSQL data copy
 │   ├── main.py            # Wiring: bot, dispatcher, scheduler
 │   ├── texts.py           # Russian texts, cards, progress bars, stats chart (pure)
 │   ├── keyboards.py       # Reply menu + inline keyboards, callback-data scheme
@@ -376,6 +458,7 @@ habit-tracker-bot/
 │       ├── streaks.py     # Pure streak / history logic
 │       ├── habits.py      # Business logic on top of the DB
 │       └── reminders.py   # asyncio-based daily reminder scheduler
+├── scripts/migrate_sqlite_to_postgres.py # one-off SQLite -> PostgreSQL copy
 ├── scripts/make_avatar.py # Pillow generator for docs/avatar.png
 ├── scripts/make_previews.py # renders docs/preview-*.png (chat mockups, headless Chrome)
 ├── docs/avatar.png        # Avatar (upload via @BotFather /setuserpic)
@@ -383,14 +466,16 @@ habit-tracker-bot/
 ├── tests/                 # pytest + pytest-asyncio
 ├── .github/workflows/     # CI: ruff + mypy + pytest
 ├── Dockerfile             # non-root image, DB in the /data volume
-├── docker-compose.yml     # restart: unless-stopped, env_file, data volume
+├── docker-compose.yml     # restart: unless-stopped, env_file, data volume (SQLite)
+├── docker-compose.postgres.yml # override: bundled postgres:16-alpine + DATABASE_URL
 └── pyproject.toml
 ```
 
 ### Design notes
 
 - **Layers**: handlers only parse Telegram input and format replies; services hold the logic;
-  `db.py` is the only module that speaks SQL, behind the `Storage` interface in `storage.py`. Streak maths is pure and trivially testable.
+  `db.py` (SQLite) and `pg.py` (PostgreSQL) are the only modules that speak SQL, behind the `Storage`
+  interface in `storage.py`. Streak maths is pure and trivially testable.
 - **Streak rule**: a streak is the run of consecutive done days ending today — or yesterday, so
   your streak doesn't read `0` before you've had the chance to check in.
 - **Scheduler**: one asyncio task per user sleeping until the next `HH:MM` in the configured
@@ -410,7 +495,7 @@ habit-tracker-bot/
 - [ ] Multiple reminders and per-habit reminders
 - [ ] Weekly goals and custom schedules (e.g. Mon/Wed/Fri)
 - [ ] Charts / monthly heatmap export
-- [ ] PostgreSQL backend for the `Storage` interface (for multi-process / very large setups)
+- [x] PostgreSQL backend for the `Storage` interface (asyncpg) with a SQLite → PostgreSQL migration script
 - [ ] Webhook mode and a `/export` command (CSV)
 - [ ] Localisation (i18n) — the UI is currently Russian only
 

@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from datetime import date
 
@@ -40,8 +41,9 @@ async def test_delete_cascades_checkins(db):
     h = await db.add_habit(1, "Read")
     await db.add_checkin(h.id, date(2026, 10, 3))
     await db.delete_habit(1, h.id)
-    async with db.conn.execute("SELECT COUNT(*) FROM checkins") as cur:
-        assert (await cur.fetchone())[0] == 0
+    assert await db.get_checkin_days(h.id) == set()
+    assert await db.get_admin_stats(date(2026, 10, 3)) is not None
+    assert (await db.get_admin_stats(date(2026, 10, 3))).checkins_today == 0
 
 
 async def test_reminder_upsert_and_remove(db):
@@ -309,6 +311,7 @@ async def test_file_database_uses_wal_with_normal_sync_and_busy_timeout(tmp_path
         con.close()
 
 
+@pytest.mark.sqlite_only
 async def test_memory_database_skips_wal(db):
     async with db.conn.execute("PRAGMA journal_mode") as cur:
         assert (await cur.fetchone())[0] == "memory"
@@ -352,7 +355,8 @@ async def test_reader_is_not_blocked_by_open_write_transaction(tmp_path):
 async def test_admin_stats_on_empty_database(db):
     stats = await db.get_admin_stats(date(2026, 10, 4))
     assert (stats.total_users, stats.active_users_7d, stats.total_habits) == (0, 0, 0)
-    assert stats.checkins_today == 0 and stats.db_size_bytes == 0
+    assert stats.checkins_today == 0
+    assert stats.db_size_bytes == 0 if isinstance(db, Database) else stats.db_size_bytes > 0
 
 
 async def test_admin_stats_counts(db):
@@ -388,3 +392,15 @@ async def test_admin_stats_reports_file_size(tmp_path):
         assert (await database.get_admin_stats(date(2026, 10, 4))).db_size_bytes > 0
     finally:
         await database.close()
+
+
+async def test_large_telegram_ids_and_many_concurrent_checkins(db):
+    big = 5_000_000_000 + 7  # Telegram IDs exceed 32 bits
+    habit = await db.add_habit(big, "Read")
+    assert habit is not None and (await db.get_habit(big, habit.id)) == habit
+    await db.set_reminder(big, big, "09:00")
+    assert (await db.get_reminder(big)).chat_id == big
+    days = [date(2026, 9, 1 + i) for i in range(20)]
+    results = await asyncio.gather(*(db.add_checkin(habit.id, d) for d in days for _ in range(3)))
+    assert results.count(True) == 20  # each day counted once, duplicates ignored
+    assert await db.get_checkin_days(habit.id) == set(days)

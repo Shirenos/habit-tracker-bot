@@ -12,7 +12,8 @@ data
 *.sqlite3
 tests
 docs
-scripts
+scripts/*
+!scripts/migrate_sqlite_to_postgres.py
 **/__pycache__
 **/*.egg-info
 .pytest_cache

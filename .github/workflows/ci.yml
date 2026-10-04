@@ -8,6 +8,23 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: habits_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Enables the PostgreSQL half of the storage test-suite (skipped when unset).
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/habits_test
     strategy:
       fail-fast: false
       matrix:
@@ -28,4 +45,4 @@ jobs:
       - name: Type check (mypy)
         run: mypy
       - name: Test (pytest)
-        run: pytest -q
+        run: pytest -q -rs

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from habit_bot.storage import AdminStats, Habit, Reminder
+from habit_bot.storage import AdminStats, Habit, Reminder, name_key
 
 # Bump when the schema changes and add a step to ``Database._migrate``.
 # 0 = legacy databases created before versioning, 1 = habits.name_key (case-insensitive names).
@@ -38,11 +38,6 @@ CREATE TABLE IF NOT EXISTS reminders (
     time    TEXT    NOT NULL
 );
 """
-
-
-def name_key(name: str) -> str:
-    """Key used for case-insensitive uniqueness (``casefold`` also handles Cyrillic)."""
-    return name.casefold()
 
 
 __all__ = ["SCHEMA_VERSION", "AdminStats", "Database", "Habit", "Reminder", "name_key"]

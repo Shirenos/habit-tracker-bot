@@ -1,5 +1,7 @@
 from datetime import date, timedelta
 
+import pytest
+
 from habit_bot.services.habits import MAX_HABITS_PER_USER, AddResult, DoneResult
 
 TODAY = date(2026, 10, 3)
@@ -71,6 +73,7 @@ async def count_selects(db) -> list[str]:
     return selects
 
 
+@pytest.mark.sqlite_only
 async def test_list_with_status_uses_one_query(service, db):
     for name in ("A", "B", "C", "D"):
         await service.add(1, name)
@@ -86,6 +89,7 @@ async def test_list_with_status_uses_one_query(service, db):
     assert len(selects) == 1
 
 
+@pytest.mark.sqlite_only
 async def test_stats_uses_two_queries_and_matches_per_habit_computation(service, db):
     from habit_bot.services import streaks
 

@@ -1,0 +1,36 @@
+# PostgreSQL instead of SQLite. Use it as an override of the default compose file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build
+#
+# Requires POSTGRES_PASSWORD in .env (use URL-safe characters, e.g. `openssl rand -hex 16`).
+services:
+  bot:
+    environment:
+      DATABASE_URL: postgresql://habits:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/habits
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: habits
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: habits
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U habits -d habits"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pg-data:

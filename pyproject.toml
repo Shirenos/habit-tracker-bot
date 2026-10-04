@@ -17,7 +17,9 @@ dependencies = [
 
 [project.optional-dependencies]
 avatar = ["pillow>=10"]
+postgres = ["asyncpg>=0.29"]
 dev = [
+    "asyncpg>=0.29",
     "pillow>=10",
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -49,3 +51,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 strict = true
 files = ["src"]
 python_version = "3.11"
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
+ignore_missing_imports = true

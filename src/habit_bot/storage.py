@@ -1,8 +1,8 @@
 """Storage interface: everything the rest of the bot needs from a database.
 
-``habit_bot.db.Database`` (SQLite + WAL) is the only implementation today. Services depend on this
-``Storage`` protocol rather than on SQLite, so another backend (e.g. PostgreSQL) can be added by
-implementing the same methods without touching handlers or services.
+Two implementations exist: ``habit_bot.db.Database`` (SQLite + WAL, the default) and
+``habit_bot.pg.PostgresStorage`` (PostgreSQL via asyncpg). Services depend on this ``Storage``
+protocol rather than on a concrete database; ``habit_bot.factory.create_storage`` picks one.
 """
 
 from __future__ import annotations
@@ -11,6 +11,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Protocol
+
+
+def name_key(name: str) -> str:
+    """Key used for case-insensitive uniqueness (``casefold`` also handles Cyrillic)."""
+    return name.casefold()
 
 
 @dataclass(frozen=True, slots=True)
