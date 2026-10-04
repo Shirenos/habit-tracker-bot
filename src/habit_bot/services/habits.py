@@ -35,11 +35,20 @@ class HabitStats:
     total: int
     week: list[tuple[date, bool]]
 
+    @property
+    def done_today(self) -> bool:
+        """``week`` always ends with today, so the last flag tells if it is done."""
+        return bool(self.week) and self.week[-1][1]
+
 
 class HabitService:
     def __init__(self, db: Database, tz: ZoneInfo) -> None:
         self._db = db
         self._tz = tz
+
+    @property
+    def timezone(self) -> ZoneInfo:
+        return self._tz
 
     def today(self) -> date:
         return datetime.now(self._tz).date()
@@ -69,6 +78,9 @@ class HabitService:
             return DoneResult.NOT_FOUND, None
         created = await self._db.add_checkin(habit.id, day or self.today())
         return (DoneResult.OK if created else DoneResult.ALREADY), habit
+
+    async def get(self, user_id: int, habit_id: int) -> Habit | None:
+        return await self._db.get_habit(user_id, habit_id)
 
     async def delete(self, user_id: int, habit_id: int) -> bool:
         return await self._db.delete_habit(user_id, habit_id)

@@ -8,12 +8,15 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 
 from habit_bot.config import ConfigError, load_settings
 from habit_bot.db import Database
 from habit_bot.handlers import build_router
+from habit_bot.profile import apply_commands
 from habit_bot.services.habits import HabitService
 from habit_bot.services.reminders import ReminderScheduler
+from habit_bot.views import reminder_composer
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +31,19 @@ async def main() -> None:
     await db.connect()
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    scheduler = ReminderScheduler(db, bot.send_message, settings.timezone)
+    habits = HabitService(db, settings.timezone)
+    scheduler = ReminderScheduler(
+        db, bot.send_message, settings.timezone, compose=reminder_composer(habits)
+    )
     await scheduler.start()
 
-    dp = Dispatcher(habits=HabitService(db, settings.timezone), scheduler=scheduler)
+    dp = Dispatcher(habits=habits, scheduler=scheduler)
     dp.include_router(build_router())
+
+    try:  # cheap and idempotent; name/descriptions are applied via `python -m habit_bot.profile`
+        await apply_commands(bot)
+    except TelegramAPIError:
+        logger.warning("Could not refresh the command list", exc_info=True)
 
     try:
         logger.info("Bot started")

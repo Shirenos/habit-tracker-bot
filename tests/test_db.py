@@ -68,3 +68,11 @@ async def test_data_persists_on_disk(tmp_path):
 async def test_using_closed_db_raises():
     with pytest.raises(RuntimeError):
         await Database(":memory:").list_habits(1)
+
+
+async def test_get_reminder(db):
+    assert await db.get_reminder(1) is None
+    await db.set_reminder(1, 100, "08:00")
+    reminder = await db.get_reminder(1)
+    assert (reminder.chat_id, reminder.time) == (100, "08:00")
+    assert await db.get_reminder(2) is None

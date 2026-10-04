@@ -80,3 +80,48 @@ def test_config_rejects_bad_timezone(monkeypatch, tmp_path):
     monkeypatch.setenv("TIMEZONE", "Mars/Olympus")
     with pytest.raises(ConfigError):
         load_settings(tmp_path / "missing.env")
+
+
+async def test_scheduler_uses_composed_message_and_can_skip(db, monkeypatch):
+    sent: list[tuple[int, str, object]] = []
+
+    async def send(chat_id: int, text: str, reply_markup=None) -> None:
+        sent.append((chat_id, text, reply_markup))
+
+    async def compose(user_id: int):
+        return None if user_id == 2 else (f"hello {user_id}", "KB")
+
+    monkeypatch.setattr("habit_bot.services.reminders.seconds_until", lambda *_: 0.01)
+    scheduler = ReminderScheduler(db, send, ZoneInfo("UTC"), compose=compose)
+    await scheduler.set(1, 100, time(8, 0))
+    await scheduler.set(2, 200, time(8, 0))  # composer returns None: nothing to remind about
+    await asyncio.sleep(0.1)
+    await scheduler.stop()
+
+    assert sent and all(item == (100, "hello 1", "KB") for item in sent)
+
+
+async def test_scheduler_get(db):
+    async def send(*_a, **_k) -> None: ...
+
+    scheduler = ReminderScheduler(db, send, ZoneInfo("UTC"))
+    assert await scheduler.get(1) is None
+    await scheduler.set(1, 100, time(21, 30))
+    assert await scheduler.get(1) == time(21, 30)
+    await scheduler.stop()
+
+
+async def test_reminder_composer_lists_only_open_habits(service):
+    from habit_bot.views import reminder_composer
+
+    compose = reminder_composer(service)
+    assert await compose(1) is None  # no habits
+    await service.add(1, "Read")
+    await service.add(1, "Run")
+    await service.done(1, 1)
+    text, markup = await compose(1)
+    assert "Время для привычек" in text
+    datas = [b.callback_data for row in markup.inline_keyboard for b in row]
+    assert "done:2:t" in datas and "done:1:t" not in datas
+    await service.done(1, 2)
+    assert await compose(1) is None  # everything done: stay quiet

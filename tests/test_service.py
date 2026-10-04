@@ -38,3 +38,15 @@ async def test_stats(service):
     assert stats.longest == 3
     assert stats.total == 4
     assert sum(done for _, done in stats.week) == 4
+
+
+async def test_stats_done_today_and_timezone(service):
+    _, habit = await service.add(1, "Read")
+    assert service.timezone.key == "UTC"
+    assert (await service.get(1, habit.id)).name == "Read"
+    assert await service.get(2, habit.id) is None
+    (before,) = await service.stats(1)
+    assert before.done_today is False
+    await service.done(1, habit.id)
+    (after,) = await service.stats(1)
+    assert after.done_today is True

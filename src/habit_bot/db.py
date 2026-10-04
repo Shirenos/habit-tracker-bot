@@ -136,6 +136,13 @@ class Database:
         await self.conn.commit()
         return cur.rowcount > 0
 
+    async def get_reminder(self, user_id: int) -> Reminder | None:
+        async with self.conn.execute(
+            "SELECT user_id, chat_id, time FROM reminders WHERE user_id = ?", (user_id,)
+        ) as cur:
+            r = await cur.fetchone()
+        return Reminder(r["user_id"], r["chat_id"], r["time"]) if r else None
+
     async def list_reminders(self) -> list[Reminder]:
         async with self.conn.execute("SELECT user_id, chat_id, time FROM reminders") as cur:
             return [Reminder(r["user_id"], r["chat_id"], r["time"]) async for r in cur]
