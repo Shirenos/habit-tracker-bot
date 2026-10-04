@@ -1,6 +1,7 @@
 # 🌱 Habit Tracker Bot
 
 A Telegram bot that helps you build habits, keep streaks alive and never forget a daily check-in.
+The bot's user interface is in Russian.
 Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **asyncio scheduler**.
 
 [![CI](https://github.com/Shirenos/habit-tracker-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Shirenos/habit-tracker-bot/actions/workflows/ci.yml)
@@ -10,32 +11,126 @@ Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **as
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## 📸 Demo
-
-![Bot demo](docs/demo.png)
-
 ## ✨ Features
 
 - **Track habits** — add, list and delete personal habits (per-user, isolated).
-- **Daily check-ins** — mark a habit done with one command; double check-ins are idempotent.
-- **Streaks & stats** — current streak, best streak, total completions and a 🟩⬜ view of the last 7 days.
-- **Daily reminder** — pick a time with `/remind 21:30`; reminders survive restarts.
+- **Pretty cards** — Telegram HTML with emoji, a `▰▰▰▱▱` progress bar for the day and for each
+  habit's last 7 days, 🔥 streaks with Russian plurals («1 день, 2 дня, 5 дней»), milestone hints
+  («До 7 дней: ▰▰▰▱▱▱▱ 3/7»), motivating phrases and friendly empty states.
+- **Menu & inline buttons** — a persistent bottom keyboard (Сегодня · Добавить · Список ·
+  Статистика · Напоминания · Настройки); a ✅ button under every open habit marks it done *in place*;
+  🗑 asks for confirmation; 🔄 refreshes; all screens edit the message instead of spamming the chat.
+- **Streaks & stats** — current streak, best streak, total, a 🟩⬜ week strip per habit and a text
+  bar chart of the whole week.
+- **Daily reminder** — pick a preset (08:00 · 12:00 · 18:00 · 21:00) or `/remind 21:30`; the
+  reminder lists only the *unfinished* habits with ✅ buttons and stays silent when all are done.
+  Reminders survive restarts.
+- **Bot profile via Bot API** — name, descriptions, Russian command list and the menu button are
+  applied by `python -m habit_bot.profile`; the command list is also refreshed on every start.
 - **Timezone aware** — "today" and reminders follow a configurable IANA timezone.
-- **Safe output** — user input is HTML-escaped; length and count limits per user.
+- **Safe output** — all user input is HTML-escaped; length and count limits per user.
 - **Production ready** — Dockerfile, docker-compose with a persistent volume, CI with ruff + pytest.
 
 ## 💬 Commands
 
 | Command | Description |
 | --- | --- |
-| `/start` | Welcome message |
-| `/help` | List of commands |
-| `/add <habit>` | Create a habit, e.g. `/add Drink water` |
-| `/list` | Show habits and whether they're done today |
-| `/done <id>` | Mark a habit as done today |
-| `/stats` | Streaks and the last 7 days for each habit |
-| `/delete <id>` | Delete a habit and its history |
-| `/remind HH:MM` | Daily reminder at the given time (24h). `/remind off` disables it |
+| `/start` | Greeting and the bottom menu |
+| `/menu` | Show the menu again |
+| `/today` | Today's checklist with ✅ buttons |
+| `/add <habit>` | Create a habit, e.g. `/add Пить воду` (without a name — asks for it) |
+| `/list` | All habits with streaks; ✅ / 🗑 buttons |
+| `/done <id>` | Mark a habit as done today (without id — opens the checklist) |
+| `/stats` | Week chart, streaks and records |
+| `/remind HH:MM` | Daily reminder (24h). `/remind off` disables it; without args opens the panel |
+| `/delete <id>` | Delete a habit and its history (asks for confirmation) |
+| `/cancel` | Leave the "enter a habit name" dialog |
+| `/help` | Help |
+
+## 🎨 Interface
+
+The bottom keyboard gives one-tap access to everything; under each habit there is a ✅ button that
+edits the message in place. A text rendition of the output for demo data on Sunday 4 October 2026
+(the real bot sends the same content as formatted Telegram HTML; no real chats are shown here):
+
+`/list`
+
+```text
+📋 Мои привычки  4 из 30
+━━━━━━━━━━━━━━━
+
+Сегодня: ▰▰▱▱▱ 2/4
+
+✅ Пить воду  #1
+└ 🔥 4 дня · ▰▰▰▰▰▰▱ 6/7
+
+⬜ Читать 20 минут  #2
+└ 🔥 3 дня · ▰▰▰▱▱▱▱ 3/7
+
+✅ Зарядка  #3
+└ 🔥 2 дня · ▰▰▰▰▱▱▱ 4/7
+
+⬜ Медитация  #4
+└ 🌱 серия впереди · ▱▱▱▱▱▱▱ 0/7
+
+[ ⬜→✅ Читать 20 минут ] [ 🗑 ]
+[ ✔️ Пить воду ]  [ 🗑 ]      ← already done today
+[ 🔄 Обновить ] [ ➕ Добавить ] [ 📅 Сегодня ]
+```
+
+`/stats`
+
+```text
+📊 Статистика
+━━━━━━━━━━━━━━━
+
+Неделя · 28 сентября – 4 октября
+Пн 28 ▰▱▱▱▱ 1/4
+Вт 29 ▰▰▱▱▱ 2/4
+Ср 30 ▰▱▱▱▱ 1/4
+Чт  1 ▰▰▱▱▱ 2/4
+Пт  2 ▰▰▱▱▱ 2/4
+Сб  3 ▰▰▰▰▱ 3/4
+Вс  4 ▰▰▱▱▱ 2/4  ← сегодня
+✨ Выполнено 13 из 28 · 46%
+🔥 Лучшая серия: Пить воду — 4 дня
+
+По привычкам
+
+✅ Пить воду
+🟩🟩⬜🟩🟩🟩🟩
+🔥 4 дня · 🏆 рекорд 4 · всего 10
+
+⬜ Читать 20 минут
+⬜⬜⬜🟩🟩🟩⬜
+🔥 3 дня · 🏆 рекорд 3 · всего 3
+
+💬 Начало положено. Главное — регулярность, а не идеальность 🌱
+```
+
+Marking a habit done (`/done 2` or the ✅ button):
+
+```text
+🎉 Отличная работа!
+━━━━━━━━━━━━━━━
+
+✅ Читать 20 минут — выполнено
+🔥 4 дня · 🏆 новый рекорд!
+🎯 До 7 дней: ▰▰▰▱▱▱▱ 4/7
+```
+
+## 🪪 Bot profile & avatar
+
+Name, descriptions, the Russian command list and the menu button are set through the Bot API:
+
+```bash
+python -m habit_bot.profile        # reads BOT_TOKEN from the environment / .env, never prints it
+```
+
+`setMyName` is strictly rate-limited, so it is not called on every start (the command list and menu
+button are refreshed automatically at startup). The avatar lives in `docs/avatar.png`
+(1024×1024) and is generated by `scripts/make_avatar.py` (`pip install pillow`). The Bot API cannot
+change a bot's photo — upload it via [@BotFather](https://t.me/BotFather) → `/setuserpic`.
 
 ## 🚀 Quickstart
 
@@ -83,8 +178,10 @@ ruff check . && ruff format --check .
 pytest
 ```
 
-Tests cover the streak maths, the database layer (including cascade deletes and persistence),
-the service layer, reminder parsing/scheduling, configuration and the command handlers.
+Tests cover the streak maths, the database layer, the service layer, reminders (including the
+composed message), configuration, text/keyboard rendering (plurals, bars, Telegram length and
+callback-data limits), the bot profile and the avatar generator, plus end-to-end handler flows that
+drive the real aiogram dispatcher against a fake Telegram session.
 CI runs the same checks on Python 3.11, 3.12 and 3.13.
 
 ## 🗂 Project structure
@@ -95,11 +192,17 @@ habit-tracker-bot/
 │   ├── config.py          # Settings from env / .env
 │   ├── db.py              # aiosqlite repository + schema
 │   ├── main.py            # Wiring: bot, dispatcher, scheduler
-│   ├── handlers/          # aiogram routers (basic, habits, reminders)
+│   ├── texts.py           # Russian texts, cards, progress bars, stats chart (pure)
+│   ├── keyboards.py       # Reply menu + inline keyboards, callback-data scheme
+│   ├── views.py           # Screens = (text, keyboard); in-place editing helpers
+│   ├── profile.py         # Name / descriptions / commands / menu button via Bot API
+│   ├── handlers/          # aiogram routers (basic, habits, reminders, fallback)
 │   └── services/
 │       ├── streaks.py     # Pure streak / history logic
 │       ├── habits.py      # Business logic on top of the DB
 │       └── reminders.py   # asyncio-based daily reminder scheduler
+├── scripts/make_avatar.py # Pillow generator for docs/avatar.png
+├── docs/avatar.png        # Avatar (upload via @BotFather /setuserpic)
 ├── tests/                 # pytest + pytest-asyncio
 ├── .github/workflows/     # CI: ruff + pytest
 ├── Dockerfile
@@ -118,13 +221,14 @@ habit-tracker-bot/
 
 ## 🗺 Roadmap
 
-- [ ] Inline keyboard buttons for `/done` straight from the reminder
+- [x] Inline keyboard buttons for `/done` straight from the reminder
+- [x] Russian UI, menu keyboard, progress bars and week chart
 - [ ] Per-user timezones (`/timezone`)
 - [ ] Multiple reminders and per-habit reminders
 - [ ] Weekly goals and custom schedules (e.g. Mon/Wed/Fri)
 - [ ] Charts / monthly heatmap export
 - [ ] Webhook mode and a `/export` command (CSV)
-- [ ] Localisation (i18n)
+- [ ] Localisation (i18n) — the UI is currently Russian only
 
 ## 🤝 Contributing
 
