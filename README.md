@@ -1,7 +1,8 @@
 # 🌱 Habit Tracker Bot
 
 A Telegram bot that helps you build habits, keep streaks alive and never forget a daily check-in.
-The bot's user interface is in Russian.
+The bot's user interface is in Russian (message strings and example output below are shown as the
+bot really sends them; English glosses are added where useful).
 Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **asyncio scheduler**.
 
 [![CI](https://github.com/Shirenos/habit-tracker-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Shirenos/habit-tracker-bot/actions/workflows/ci.yml)
@@ -15,10 +16,10 @@ Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **as
 
 - **Track habits** — add, list and delete personal habits (per-user, isolated).
 - **Pretty cards** — Telegram HTML with emoji, a `▰▰▰▱▱` progress bar for the day and for each
-  habit's last 7 days, 🔥 streaks with Russian plurals («1 день, 2 дня, 5 дней»), milestone hints
+  habit's last 7 days, 🔥 streaks with Russian plurals («1 день, 2 дня, 5 дней» — “1 day, 2 days, 5 days”), milestone hints
   («До 7 дней: ▰▰▰▱▱▱▱ 3/7»), motivating phrases and friendly empty states.
 - **Menu & inline buttons** — a persistent bottom keyboard (Сегодня · Добавить · Список ·
-  Статистика · Напоминания · Настройки); a ✅ button under every open habit marks it done *in place*;
+  Статистика · Напоминания · Настройки — Today · Add · List · Stats · Reminders · Settings); a ✅ button under every open habit marks it done *in place*;
   🗑 asks for confirmation; 🔄 refreshes; all screens edit the message instead of spamming the chat.
 - **Streaks & stats** — current streak, best streak, total, a 🟩⬜ week strip per habit and a text
   bar chart of the whole week.
@@ -38,7 +39,7 @@ Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **as
 | `/start` | Greeting and the bottom menu |
 | `/menu` | Show the menu again |
 | `/today` | Today's checklist with ✅ buttons |
-| `/add <habit>` | Create a habit, e.g. `/add Пить воду` (without a name — asks for it) |
+| `/add <habit>` | Create a habit, e.g. `/add Пить воду` (“Drink water”; without a name — asks for it) |
 | `/list` | All habits with streaks; ✅ / 🗑 buttons |
 | `/done <id>` | Mark a habit as done today (without id — opens the checklist) |
 | `/stats` | Week chart, streaks and records |
@@ -107,6 +108,13 @@ edits the message in place. A text rendition of the output for demo data on Sund
 
 💬 Начало положено. Главное — регулярность, а не идеальность 🌱
 ```
+
+> **Reading the examples:** `Мои привычки` = My habits, `Сегодня` = Today, `Статистика` =
+> Statistics, `Неделя` = Week, `Пн Вт Ср Чт Пт Сб Вс` = Mon–Sun, `Пить воду` = Drink water, `Читать 20
+> минут` = Read for 20 minutes, `Зарядка` = Morning exercise, `Медитация` = Meditation, `дня/дней` =
+> days, `серия впереди` = streak ahead, `Обновить` = Refresh, `Добавить` = Add, `Лучшая серия` = Best
+> streak, `рекорд` = record, `всего` = total, `Отличная работа!` = Great job!, `выполнено` = done,
+> `новый рекорд!` = new record!, `До 7 дней` = To 7 days.
 
 Marking a habit done (`/done 2` or the ✅ button):
 
