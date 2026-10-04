@@ -12,6 +12,69 @@ Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **as
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+<p align="center">
+  <img src="docs/preview-list.png" alt="Interface preview: /list" width="360">
+  &nbsp;&nbsp;
+  <img src="docs/preview-stats.png" alt="Interface preview: /stats" width="360">
+</p>
+
+<p align="center"><sub><b>Interface preview</b> (mockup rendered from the bot's real message templates) —
+<code>/list</code> and <code>/stats</code> with invented demo data. These are <b>not</b> real
+screenshots of a Telegram chat; regenerate them with <code>python scripts/make_previews.py</code>.</sub></p>
+
+**Try it:** [@Shirenos_Habit_Bot](https://t.me/Shirenos_Habit_Bot) on Telegram. The bot runs on the
+owner's own machine, so it may be offline.
+
+<details>
+<summary><b>🇷🇺 Русская версия</b></summary>
+
+### 🌱 Habit Tracker Bot — бот-трекер привычек
+
+Telegram-бот, который помогает формировать привычки, держать серии («стрики») и не забывать про
+ежедневную отметку. Интерфейс бота полностью на русском. Построен на **aiogram 3**, **SQLite
+(aiosqlite)** и небольшом планировщике на `asyncio`.
+
+> Картинки выше — это **макет интерфейса** (отрисован локально из настоящих шаблонов сообщений бота
+> на выдуманных демо-данных), а не реальные скриншоты чата.
+
+**Попробовать:** [@Shirenos_Habit_Bot](https://t.me/Shirenos_Habit_Bot). Бот работает на личном
+компьютере владельца, поэтому может быть офлайн.
+
+**Возможности**
+
+- Личные привычки каждого пользователя: добавление, список, удаление (данные изолированы).
+- Красивые карточки: эмодзи, полоски прогресса `▰▰▰▱▱` за день и за последние 7 дней, серии 🔥,
+  подсказки до ближайшей отметки (3, 7, 14, 30 дней…), мотивирующие фразы.
+- Меню внизу и inline-кнопки: ✅ отмечает привычку прямо в сообщении, 🗑 — удаление с
+  подтверждением, 🔄 — обновление.
+- Статистика: текущая и лучшая серия, всего отметок, недельная лента 🟩⬜ и график недели.
+- Ежедневное напоминание (`/remind 21:30` или готовые пресеты); приходит только по невыполненным
+  привычкам и переживает перезапуск.
+- Часовой пояс настраивается (`TIMEZONE`), весь пользовательский ввод экранируется.
+
+**Команды:** `/start`, `/menu`, `/today`, `/add <название>`, `/list`, `/done <номер>`, `/stats`,
+`/remind ЧЧ:ММ` (`/remind off` — выключить), `/delete <номер>`, `/cancel`, `/help`.
+
+**Быстрый старт**
+
+```bash
+# 1. создайте бота у @BotFather и скопируйте токен
+cp .env.example .env            # впишите BOT_TOKEN и TIMEZONE (например, Europe/Moscow)
+
+# 2a. запуск локально
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -e .
+python -m habit_bot
+
+# 2б. или через Docker
+docker compose up -d --build
+```
+
+Токен хранится только в `.env` (файл в `.gitignore`) и никогда не попадает в репозиторий.
+Проверки: `pip install -r requirements-dev.txt -e . && ruff check . && pytest`.
+
+</details>
+
 ## ✨ Features
 
 - **Track habits** — add, list and delete personal habits (per-user, isolated).
@@ -51,7 +114,8 @@ Built with **aiogram 3**, **SQLite (aiosqlite)** and a tiny dependency-free **as
 ## 🎨 Interface
 
 The bottom keyboard gives one-tap access to everything; under each habit there is a ✅ button that
-edits the message in place. A text rendition of the output for demo data on Sunday 4 October 2026
+edits the message in place. The picture at the top is an interface preview (a mockup rendered from the bot's real message templates).
+A text rendition of the output for demo data on Sunday 4 October 2026
 (the real bot sends the same content as formatted Telegram HTML; no real chats are shown here):
 
 `/list`
@@ -210,7 +274,9 @@ habit-tracker-bot/
 │       ├── habits.py      # Business logic on top of the DB
 │       └── reminders.py   # asyncio-based daily reminder scheduler
 ├── scripts/make_avatar.py # Pillow generator for docs/avatar.png
+├── scripts/make_previews.py # renders docs/preview-*.png (chat mockups, headless Chrome)
 ├── docs/avatar.png        # Avatar (upload via @BotFather /setuserpic)
+├── docs/preview-*.png     # Interface previews (mockups from the real templates)
 ├── tests/                 # pytest + pytest-asyncio
 ├── .github/workflows/     # CI: ruff + pytest
 ├── Dockerfile
